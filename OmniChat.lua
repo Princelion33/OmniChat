@@ -12,12 +12,22 @@ if not request_func then
     warn("Ton exécuteur ne supporte pas les requêtes HTTP !")
 end
 
--- Variables globales pour le fonctionnement de l'IA
+-- Variables globales pour le fonctionnement
 local OmniKey = ""
 local IsRunning = false
 local SelectedModel = "Meta-Llama-3.1-8B-Instruct (Default | 5 points)"
 local SystemPrompt = "You are a helpful assistant."
 local FormatString = "[ChatBot] %s"
+
+-- Variables des paramètres
+local BlacklistedPlayers = {}
+local WhitelistMode = false
+local ListeningRange = 50
+local MaxMessageLength = 150
+local AntiSpamEnabled = true
+local UseBuffer = false
+local AutoRemindBot = true
+local SelectedLanguage = "English"
 
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
@@ -28,21 +38,13 @@ local Window = Rayfield:CreateWindow({
     LoadingSubtitle = "Connected to Node.js",
     ShowText = "OmniChat",
     Theme = "Default", 
-    
     ToggleUIKeybind = "K", 
-    
     ConfigurationSaving = {
        Enabled = true,
        FolderName = "OmniChatConfig",
        FileName = "OmniChatSave"
     },
-    
-    Discord = {
-       Enabled = false,
-       Invite = "noinvitelink", 
-       RememberJoins = true 
-    },
-    
+    Discord = { Enabled = false },
     KeySystem = false 
 })
 
@@ -67,11 +69,12 @@ MainTab:CreateToggle({
     Flag = "Toggle_Running",
     Callback = function(Value)
         IsRunning = Value
-        print("Bot is running: ", Value)
     end,
 })
 
 MainTab:CreateDivider()
+
+local Drop_Blacklist -- Déclaration pour pouvoir l'utiliser dans l'input
 
 MainTab:CreateInput({
     Name = "Blacklist a player",
@@ -80,11 +83,17 @@ MainTab:CreateInput({
     RemoveTextAfterFocusLost = true,
     Flag = "Input_Blacklist",
     Callback = function(Text)
-        print("Blacklisted: ", Text)
+        if Text ~= "" then
+            table.insert(BlacklistedPlayers, Text)
+            if Drop_Blacklist then
+                Drop_Blacklist:Refresh(BlacklistedPlayers)
+            end
+            Rayfield:Notify({Title = "Blacklisted", Content = Text .. " has been blacklisted.", Duration = 3})
+        end
     end,
 })
 
-MainTab:CreateDropdown({
+Drop_Blacklist = MainTab:CreateDropdown({
     Name = "Blacklisted Players",
     Options = {"None"},
     CurrentOption = {"None"},
@@ -96,7 +105,9 @@ MainTab:CreateDropdown({
 MainTab:CreateButton({
     Name = "Reset Blacklist",
     Callback = function()
-        print("Blacklist reset")
+        BlacklistedPlayers = {}
+        Drop_Blacklist:Refresh({"None"})
+        Rayfield:Notify({Title = "Reset", Content = "Blacklist has been cleared.", Duration = 3})
     end,
 })
 
@@ -106,7 +117,9 @@ MainTab:CreateToggle({
     Name = "Whitelist Mode",
     CurrentValue = false,
     Flag = "Toggle_Whitelist",
-    Callback = function(Value) end,
+    Callback = function(Value)
+        WhitelistMode = Value
+    end,
 })
 
 MainTab:CreateSlider({
@@ -116,7 +129,9 @@ MainTab:CreateSlider({
     Suffix = "Studs",
     CurrentValue = 50,
     Flag = "Slider_Range",
-    Callback = function(Value) end,
+    Callback = function(Value)
+        ListeningRange = Value
+    end,
 })
 
 MainTab:CreateSlider({
@@ -126,21 +141,27 @@ MainTab:CreateSlider({
     Suffix = "Chars",
     CurrentValue = 150,
     Flag = "Slider_Length",
-    Callback = function(Value) end,
+    Callback = function(Value)
+        MaxMessageLength = Value
+    end,
 })
 
 MainTab:CreateToggle({
     Name = "Anti Spam",
     CurrentValue = true,
     Flag = "Toggle_AntiSpam",
-    Callback = function(Value) end,
+    Callback = function(Value)
+        AntiSpamEnabled = Value
+    end,
 })
 
 MainTab:CreateToggle({
     Name = "Buffer (Add 3 sec delay)",
     CurrentValue = false,
     Flag = "Toggle_Buffer",
-    Callback = function(Value) end,
+    Callback = function(Value)
+        UseBuffer = Value
+    end,
 })
 
 MainTab:CreateButton({
@@ -165,7 +186,9 @@ MainTab:CreateToggle({
     Name = "Auto remind you're a chatbot",
     CurrentValue = true,
     Flag = "Toggle_RemindBot",
-    Callback = function(Value) end,
+    Callback = function(Value)
+        AutoRemindBot = Value
+    end,
 })
 
 -- ==========================================
@@ -177,15 +200,16 @@ AITab:CreateDropdown({
     CurrentOption = {"Normal"},
     MultipleOptions = false,
     Flag = "Drop_Character",
-    Callback = function(Options) end,
+    Callback = function(Options) 
+        local char = Options[1]
+        SystemPrompt = "You are a " .. char .. " assistant."
+    end,
 })
 
 AITab:CreateDropdown({
     Name = "Select AI Model",
     Options = {
-        "Meta-Llama-3.1-8B-Instruct (Default | 5 points)", 
-        "ALLaM-7B-Instruct-preview (8 points)", 
-        "Meta-Llama-3.1-70B-Instruct (High IQ | 20 points)"
+        "Meta-Llama-3.1-8B-Instruct (Default | 5 points)"
     },
     CurrentOption = {"Meta-Llama-3.1-8B-Instruct (Default | 5 points)"},
     MultipleOptions = false,
@@ -201,7 +225,9 @@ AITab:CreateDropdown({
     CurrentOption = {"English"},
     MultipleOptions = false,
     Flag = "Drop_Language",
-    Callback = function(Options) end,
+    Callback = function(Options)
+        SelectedLanguage = Options[1]
+    end,
 })
 
 -- ==========================================
@@ -209,78 +235,29 @@ AITab:CreateDropdown({
 -- ==========================================
 PremiumTab:CreateLabel("❌ Premium is not activated", "x-octagon", Color3.fromRGB(255, 50, 50), false)
 
-PremiumTab:CreateToggle({
-    Name = "Text to Action Mode (Costs 1.5x points)",
-    CurrentValue = false,
-    Flag = "Toggle_TextAction",
-    Callback = function(Value) end,
-})
-
-PremiumTab:CreateToggle({
-    Name = "Auto Moving",
-    CurrentValue = false,
-    Flag = "Toggle_AutoMove",
-    Callback = function(Value) end,
-})
-
+PremiumTab:CreateToggle({ Name = "Text to Action Mode (Costs 1.5x points)", CurrentValue = false, Flag = "Toggle_TextAction", Callback = function(Value) end })
+PremiumTab:CreateToggle({ Name = "Auto Moving", CurrentValue = false, Flag = "Toggle_AutoMove", Callback = function(Value) end })
 PremiumTab:CreateDivider()
-
-PremiumTab:CreateToggle({
-    Name = "Enable Custom Prompt",
-    CurrentValue = false,
-    Flag = "Toggle_CustomPrompt",
-    Callback = function(Value) end,
-})
-
-PremiumTab:CreateInput({
-    Name = "Enter custom prompt here",
-    CurrentValue = "",
-    PlaceholderText = "Act as a...",
-    RemoveTextAfterFocusLost = false,
-    Flag = "Input_Prompt",
-    Callback = function(Text) 
-        SystemPrompt = Text
-    end,
-})
-
-PremiumTab:CreateParagraph({
-    Title = "Current Custom Prompt", 
-    Content = "Just be a normal ai"
-})
-
+PremiumTab:CreateToggle({ Name = "Enable Custom Prompt", CurrentValue = false, Flag = "Toggle_CustomPrompt", Callback = function(Value) end })
+PremiumTab:CreateInput({ Name = "Enter custom prompt here", CurrentValue = "", PlaceholderText = "Act as a...", RemoveTextAfterFocusLost = false, Flag = "Input_Prompt", Callback = function(Text) end })
+PremiumTab:CreateParagraph({ Title = "Current Custom Prompt", Content = "Just be a normal ai" })
 PremiumTab:CreateDivider()
-
-PremiumTab:CreateDropdown({
-    Name = "Custom AIs",
-    Options = {"None"},
-    CurrentOption = {"None"},
-    MultipleOptions = false,
-    Flag = "Drop_CustomAIs",
-    Callback = function(Options) end,
-})
-
-PremiumTab:CreateInput({
-    Name = "Save custom prompt with name:",
-    CurrentValue = "",
-    PlaceholderText = "Name your AI...",
-    RemoveTextAfterFocusLost = true,
-    Flag = "Input_SavePrompt",
-    Callback = function(Text) end,
-})
+PremiumTab:CreateDropdown({ Name = "Custom AIs", Options = {"None"}, CurrentOption = {"None"}, MultipleOptions = false, Flag = "Drop_CustomAIs", Callback = function(Options) end })
+PremiumTab:CreateInput({ Name = "Save custom prompt with name:", CurrentValue = "", PlaceholderText = "Name your AI...", RemoveTextAfterFocusLost = true, Flag = "Input_SavePrompt", Callback = function(Text) end })
 
 -- ==========================================
 --             TAB 4 : CHAT
 -- ==========================================
+local AIAnswerParagraph = ChatTab:CreateParagraph({
+    Title = "AI's Answer", 
+    Content = "Waiting for a message..."
+})
+
 ChatTab:CreateButton({
     Name = "Clear Chat",
     Callback = function() 
         AIAnswerParagraph:Set({Title = "AI's Answer", Content = "Waiting for a message..."})
     end,
-})
-
-local AIAnswerParagraph = ChatTab:CreateParagraph({
-    Title = "AI's Answer", 
-    Content = "Waiting for a message..."
 })
 
 local LastAIResponse = ""
@@ -313,12 +290,29 @@ ChatTab:CreateInput({
             return
         end
 
+        -- LOGIQUE DU PARAMÉTRAGE :
+        if string.len(Text) > MaxMessageLength then
+            Rayfield:Notify({Title = "Message trop long", Content = "La limite est de " .. tostring(MaxMessageLength) .. " caractères.", Duration = 4})
+            return
+        end
+
         AIAnswerParagraph:Set({Title = "AI's Answer", Content = "⏳ Thinking..."})
+
+        -- Logique du Buffer (Délai)
+        if UseBuffer then
+            task.wait(3)
+        end
+
+        -- On force l'IA à utiliser la langue choisie
+        local FinalSystemPrompt = SystemPrompt .. " Always reply in " .. SelectedLanguage .. "."
+        if AutoRemindBot then
+            FinalSystemPrompt = FinalSystemPrompt .. " Remind the user you are an AI ChatBot."
+        end
 
         local payload = {
             omni_key = OmniKey,
             model = SelectedModel,
-            system_prompt = SystemPrompt,
+            system_prompt = FinalSystemPrompt,
             user_message = Text
         }
 
@@ -332,31 +326,28 @@ ChatTab:CreateInput({
         end)
 
         if success and response then
-            -- ON SÉCURISE LE DÉCODAGE ICI
             local decodeSuccess, data = pcall(function()
                 return HttpService:JSONDecode(response.Body)
             end)
 
             if decodeSuccess then
-                -- C'est bien du JSON, on traite la réponse
-                if response.StatusCode == 200 and data.success then
+                if data.success then
                     local rawAnswer = data.answer
                     LastAIResponse = rawAnswer
                     
                     local finalMessage = string.format(FormatString, rawAnswer)
                     AIAnswerParagraph:Set({Title = "AI's Answer", Content = finalMessage})
-                    PointsLabel:Set({Title = "💳 Current Points: " .. tostring(data.remaining_points), Icon = "coins"})
+                    PointsLabel:Set("💳 Current Points: " .. tostring(data.remaining_points))
                 else
                     AIAnswerParagraph:Set({Title = "❌ API Error", Content = tostring(data.error)})
                     Rayfield:Notify({Title = "API Error", Content = tostring(data.error), Duration = 5})
                 end
             else
-                -- Ce n'est pas du JSON (erreur du panel/serveur)
-                warn("Erreur du serveur (Pas du JSON) :", response.Body)
-                AIAnswerParagraph:Set({Title = "❌ Server Error", Content = "The API did not return valid JSON. Check F9 console."})
+                warn("Erreur serveur (Pas du JSON) :", response.Body)
+                AIAnswerParagraph:Set({Title = "❌ Server Error", Content = "The API did not return valid JSON."})
             end
         else
-            AIAnswerParagraph:Set({Title = "❌ Connection Error", Content = "Could not connect to the API. Is your Node.js server online?"})
+            AIAnswerParagraph:Set({Title = "❌ Connection Error", Content = "Could not connect to the API."})
         end
     end,
 })
@@ -371,9 +362,7 @@ MoreTab:CreateInput({
     RemoveTextAfterFocusLost = false,
     Flag = "Input_APIKey",
     Callback = function(Text) 
-        -- 1. MAGIE : On supprime les espaces invisibles au début et à la fin
         OmniKey = Text:match("^%s*(.-)%s*$") or Text
-        
         if OmniKey == "" then return end
 
         Rayfield:Notify({Title = "Verifying...", Content = "Checking your key...", Duration = 2})
@@ -396,17 +385,14 @@ MoreTab:CreateInput({
 
             if decodeSuccess then
                 if data.success then
-                    -- La clé est validée !
                     PointsLabel:Set("💳 Current Points: " .. tostring(data.points))
                     Rayfield:Notify({Title = "Connected!", Content = "Key valid. You have " .. tostring(data.points) .. " points.", Duration = 4})
                 else
-                    -- L'API a répondu mais la clé est refusée
                     Rayfield:Notify({Title = "Server says:", Content = tostring(data.error), Duration = 5})
                 end
             else
-                -- Le serveur a renvoyé une page HTML d'erreur (Panel éteint ou route introuvable)
                 warn("Erreur API (Pas du JSON) :", response.Body)
-                Rayfield:Notify({Title = "API Error", Content = "Le serveur a renvoyé une erreur bizarre. Ouvre F9 !", Duration = 6})
+                Rayfield:Notify({Title = "API Error", Content = "Erreur serveur, regarde la console (F9).", Duration = 6})
             end
         else
             Rayfield:Notify({Title = "Connection Error", Content = "Impossible de joindre le serveur.", Duration = 4})
@@ -414,62 +400,18 @@ MoreTab:CreateInput({
     end,
 })
 
-MoreTab:CreateButton({
-    Name = "Official Discord Server",
-    Callback = function()
-        setclipboard("https://discord.gg/tonserveur")
-        Rayfield:Notify({Title = "Discord", Content = "Link copied to clipboard!", Duration = 3})
-    end,
-})
-
-MoreTab:CreateToggle({
-    Name = "Chat Bypass",
-    CurrentValue = false,
-    Flag = "Toggle_Bypass",
-    Callback = function(Value) end,
-})
-
-MoreTab:CreateToggle({
-    Name = "Anti Chat Logger",
-    CurrentValue = true,
-    Flag = "Toggle_AntiLog",
-    Callback = function(Value) end,
-})
-
-MoreTab:CreateButton({
-    Name = "Delete Saved AIs",
-    Callback = function() end,
-})
+MoreTab:CreateButton({ Name = "Official Discord Server", Callback = function() setclipboard("https://discord.gg/tonserveur"); Rayfield:Notify({Title = "Discord", Content = "Link copied to clipboard!", Duration = 3}) end })
+MoreTab:CreateToggle({ Name = "Chat Bypass", CurrentValue = false, Flag = "Toggle_Bypass", Callback = function(Value) end })
+MoreTab:CreateToggle({ Name = "Anti Chat Logger", CurrentValue = true, Flag = "Toggle_AntiLog", Callback = function(Value) end })
+MoreTab:CreateButton({ Name = "Delete Saved AIs", Callback = function() end })
 
 -- ==========================================
 --             TAB 6 : HELP
 -- ==========================================
-HelpTab:CreateParagraph({
-    Title = "How do I use OmniChat?", 
-    Content = "1. Get your key from our Discord Server.\n2. Go to the 'More' tab and paste your key.\n3. Go to 'Main' and toggle 'Running'."
-})
+HelpTab:CreateParagraph({ Title = "How do I use OmniChat?", Content = "1. Get your key from our Discord Server.\n2. Go to the 'More' tab and paste your key.\n3. Go to 'Main' and toggle 'Running'." })
+HelpTab:CreateParagraph({ Title = "How to use with a different Roblox account?", Content = "You can add multiple Roblox accounts to a single key! Go to the bot channel in Discord and type /addaccount with your Roblox username." })
+HelpTab:CreateParagraph({ Title = "What are the points for?", Content = "The API is expensive. Each message costs points depending on the AI model you choose (5, 8, or 20 pts)." })
+HelpTab:CreateParagraph({ Title = "How to get more points?", Content = "Use /claim in Discord every 24h, use /beg to ask other players, or buy premium packages via tickets." })
+HelpTab:CreateParagraph({ Title = "I forgot my key!", Content = "Use the /remind command in the Discord bot channel to get it back in DM." })
 
-HelpTab:CreateParagraph({
-    Title = "How to use with a different Roblox account?", 
-    Content = "You can add multiple Roblox accounts to a single key! Go to the bot channel in Discord and type /addaccount with your Roblox username."
-})
-
-HelpTab:CreateParagraph({
-    Title = "What are the points for?", 
-    Content = "The API is expensive. Each message costs points depending on the AI model you choose (5, 8, or 20 pts)."
-})
-
-HelpTab:CreateParagraph({
-    Title = "How to get more points?", 
-    Content = "Use /claim in Discord every 24h, use /beg to ask other players, or buy premium packages via tickets."
-})
-
-HelpTab:CreateParagraph({
-    Title = "I forgot my key!", 
-    Content = "Use the /remind command in the Discord bot channel to get it back in DM."
-})
-
--- ==========================================
---      INITIALIZATION & SAVING
--- ==========================================
 Rayfield:LoadConfiguration()

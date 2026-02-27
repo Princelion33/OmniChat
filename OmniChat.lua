@@ -273,7 +273,9 @@ PremiumTab:CreateInput({
 -- ==========================================
 ChatTab:CreateButton({
     Name = "Clear Chat",
-    Callback = function() end,
+    Callback = function() 
+        AIAnswerParagraph:Set({Title = "AI's Answer", Content = "Waiting for a message..."})
+    end,
 })
 
 local AIAnswerParagraph = ChatTab:CreateParagraph({
@@ -330,18 +332,28 @@ ChatTab:CreateInput({
         end)
 
         if success and response then
-            local data = HttpService:JSONDecode(response.Body)
-            
-            if response.StatusCode == 200 and data.success then
-                local rawAnswer = data.answer
-                LastAIResponse = rawAnswer
-                
-                local finalMessage = string.format(FormatString, rawAnswer)
-                AIAnswerParagraph:Set({Title = "AI's Answer", Content = finalMessage})
-                PointsLabel:Set({Title = "💳 Current Points: " .. tostring(data.remaining_points), Icon = "coins"})
+            -- ON SÉCURISE LE DÉCODAGE ICI
+            local decodeSuccess, data = pcall(function()
+                return HttpService:JSONDecode(response.Body)
+            end)
+
+            if decodeSuccess then
+                -- C'est bien du JSON, on traite la réponse
+                if response.StatusCode == 200 and data.success then
+                    local rawAnswer = data.answer
+                    LastAIResponse = rawAnswer
+                    
+                    local finalMessage = string.format(FormatString, rawAnswer)
+                    AIAnswerParagraph:Set({Title = "AI's Answer", Content = finalMessage})
+                    PointsLabel:Set({Title = "💳 Current Points: " .. tostring(data.remaining_points), Icon = "coins"})
+                else
+                    AIAnswerParagraph:Set({Title = "❌ API Error", Content = tostring(data.error)})
+                    Rayfield:Notify({Title = "API Error", Content = tostring(data.error), Duration = 5})
+                end
             else
-                AIAnswerParagraph:Set({Title = "❌ Error", Content = tostring(data.error)})
-                Rayfield:Notify({Title = "API Error", Content = tostring(data.error), Duration = 5})
+                -- Ce n'est pas du JSON (erreur du panel/serveur)
+                warn("Erreur du serveur (Pas du JSON) :", response.Body)
+                AIAnswerParagraph:Set({Title = "❌ Server Error", Content = "The API did not return valid JSON. Check F9 console."})
             end
         else
             AIAnswerParagraph:Set({Title = "❌ Connection Error", Content = "Could not connect to the API. Is your Node.js server online?"})

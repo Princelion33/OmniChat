@@ -1,6 +1,23 @@
 -- ==========================================
---        OMNICHAT HUB - INTERFACE
+--        OMNICHAT HUB - INTERFACE & API
 -- ==========================================
+
+-- L'URL de ton API Node.js
+local API_URL = "http://us1.airanode.cloud:25765/api/chat"
+
+local HttpService = game:GetService("HttpService")
+local request_func = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+
+if not request_func then
+    warn("Ton exécuteur ne supporte pas les requêtes HTTP !")
+end
+
+-- Variables globales pour le fonctionnement de l'IA
+local OmniKey = ""
+local IsRunning = false
+local SelectedModel = "Meta-Llama-3.1-8B-Instruct (Default | 5 points)"
+local SystemPrompt = "You are a helpful assistant."
+local FormatString = "[ChatBot] %s"
 
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
@@ -8,11 +25,10 @@ local Window = Rayfield:CreateWindow({
     Name = "OmniChat Hub 🤖",
     Icon = 0, 
     LoadingTitle = "OmniChat Interface",
-    LoadingSubtitle = "by YourName",
+    LoadingSubtitle = "Connected to Node.js",
     ShowText = "OmniChat",
     Theme = "Default", 
     
-    -- On met "K" ici, c'est la valeur par défaut qui ne bug jamais avec Rayfield
     ToggleUIKeybind = "K", 
     
     ConfigurationSaving = {
@@ -43,13 +59,14 @@ local HelpTab = Window:CreateTab("Help", "help-circle")
 -- ==========================================
 --             TAB 1 : MAIN
 -- ==========================================
-local PointsLabel = MainTab:CreateLabel("💳 Current Points: 0", "coins", Color3.fromRGB(255, 215, 0), false)
+local PointsLabel = MainTab:CreateLabel("💳 Current Points: ?", "coins", Color3.fromRGB(255, 215, 0), false)
 
 MainTab:CreateToggle({
     Name = "Running",
     CurrentValue = false,
     Flag = "Toggle_Running",
     Callback = function(Value)
+        IsRunning = Value
         print("Bot is running: ", Value)
     end,
 })
@@ -139,7 +156,9 @@ MainTab:CreateInput({
     PlaceholderText = "[ChatBot] %s",
     RemoveTextAfterFocusLost = false,
     Flag = "Input_Format",
-    Callback = function(Text) end,
+    Callback = function(Text)
+        FormatString = Text
+    end,
 })
 
 MainTab:CreateToggle({
@@ -171,7 +190,9 @@ AITab:CreateDropdown({
     CurrentOption = {"Meta-Llama-3.1-8B-Instruct (Default | 5 points)"},
     MultipleOptions = false,
     Flag = "Drop_Model",
-    Callback = function(Options) end,
+    Callback = function(Options) 
+        SelectedModel = Options[1]
+    end,
 })
 
 AITab:CreateDropdown({
@@ -217,7 +238,9 @@ PremiumTab:CreateInput({
     PlaceholderText = "Act as a...",
     RemoveTextAfterFocusLost = false,
     Flag = "Input_Prompt",
-    Callback = function(Text) end,
+    Callback = function(Text) 
+        SystemPrompt = Text
+    end,
 })
 
 PremiumTab:CreateParagraph({
@@ -258,11 +281,17 @@ local AIAnswerParagraph = ChatTab:CreateParagraph({
     Content = "Waiting for a message..."
 })
 
+local LastAIResponse = ""
+
 ChatTab:CreateButton({
     Name = "Copy the answer",
     Callback = function()
-        -- setclipboard("Le texte de l'IA ici")
-        Rayfield:Notify({Title = "Copied!", Content = "Answer copied to clipboard.", Duration = 3})
+        if LastAIResponse ~= "" then
+            setclipboard(LastAIResponse)
+            Rayfield:Notify({Title = "Copied!", Content = "Answer copied to clipboard.", Duration = 3})
+        else
+            Rayfield:Notify({Title = "Error", Content = "Nothing to copy yet!", Duration = 3})
+        end
     end,
 })
 
@@ -273,8 +302,50 @@ ChatTab:CreateInput({
     RemoveTextAfterFocusLost = true,
     Flag = "Input_ManualMessage",
     Callback = function(Text) 
-        -- Simulation
-        AIAnswerParagraph:Set({Title = "AI's Answer", Content = "Processing..."})
+        if not IsRunning then
+            Rayfield:Notify({Title = "Error", Content = "You must enable 'Running' in the Main tab!", Duration = 3})
+            return
+        end
+        if OmniKey == "" then
+            Rayfield:Notify({Title = "Error", Content = "Please enter your OmniChat Key in the More tab.", Duration = 4})
+            return
+        end
+
+        AIAnswerParagraph:Set({Title = "AI's Answer", Content = "⏳ Thinking..."})
+
+        local payload = {
+            omni_key = OmniKey,
+            model = SelectedModel,
+            system_prompt = SystemPrompt,
+            user_message = Text
+        }
+
+        local success, response = pcall(function()
+            return request_func({
+                Url = API_URL,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = HttpService:JSONEncode(payload)
+            })
+        end)
+
+        if success and response then
+            local data = HttpService:JSONDecode(response.Body)
+            
+            if response.StatusCode == 200 and data.success then
+                local rawAnswer = data.answer
+                LastAIResponse = rawAnswer
+                
+                local finalMessage = string.format(FormatString, rawAnswer)
+                AIAnswerParagraph:Set({Title = "AI's Answer", Content = finalMessage})
+                PointsLabel:Set({Title = "💳 Current Points: " .. tostring(data.remaining_points), Icon = "coins"})
+            else
+                AIAnswerParagraph:Set({Title = "❌ Error", Content = tostring(data.error)})
+                Rayfield:Notify({Title = "API Error", Content = tostring(data.error), Duration = 5})
+            end
+        else
+            AIAnswerParagraph:Set({Title = "❌ Connection Error", Content = "Could not connect to the API. Is your Node.js server online?"})
+        end
     end,
 })
 
@@ -288,14 +359,15 @@ MoreTab:CreateInput({
     RemoveTextAfterFocusLost = false,
     Flag = "Input_APIKey",
     Callback = function(Text) 
-        print("Key entered: " .. Text)
+        OmniKey = Text
+        Rayfield:Notify({Title = "Key Saved", Content = "Your API key has been registered.", Duration = 2})
     end,
 })
 
 MoreTab:CreateButton({
     Name = "Official Discord Server",
     Callback = function()
-        -- setclipboard("https://discord.gg/tonserveur")
+        setclipboard("https://discord.gg/tonserveur")
         Rayfield:Notify({Title = "Discord", Content = "Link copied to clipboard!", Duration = 3})
     end,
 })

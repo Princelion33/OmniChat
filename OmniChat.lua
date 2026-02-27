@@ -12,8 +12,8 @@ local Window = Rayfield:CreateWindow({
     ShowText = "OmniChat",
     Theme = "Default", 
     
-    -- LA CORRECTION EST ICI :
-    ToggleUIKeybind = Enum.KeyCode.RightShift, -- Ou tu peux mettre "K" avec des guillemets si tu préfères
+    -- On met "K" ici, c'est la valeur par défaut qui ne bug jamais avec Rayfield
+    ToggleUIKeybind = "K", 
     
     ConfigurationSaving = {
        Enabled = true,

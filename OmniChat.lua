@@ -372,7 +372,37 @@ MoreTab:CreateInput({
     Flag = "Input_APIKey",
     Callback = function(Text) 
         OmniKey = Text
-        Rayfield:Notify({Title = "Key Saved", Content = "Your API key has been registered.", Duration = 2})
+        if OmniKey == "" then return end
+
+        Rayfield:Notify({Title = "Verifying...", Content = "Checking your key...", Duration = 2})
+
+        -- On utilise l'URL de base, mais on remplace /chat par /verify
+        local verify_url = string.gsub(API_URL, "/chat", "/verify")
+
+        local success, response = pcall(function()
+            return request_func({
+                Url = verify_url,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = HttpService:JSONEncode({ omni_key = OmniKey })
+            })
+        end)
+
+        if success and response then
+            local decodeSuccess, data = pcall(function()
+                return HttpService:JSONDecode(response.Body)
+            end)
+
+            if decodeSuccess and data.success then
+                -- La clé est valide, on met à jour l'affichage des points !
+                PointsLabel:Set("💳 Current Points: " .. tostring(data.points), "coins")
+                Rayfield:Notify({Title = "Connected!", Content = "Key valid. You have " .. tostring(data.points) .. " points.", Duration = 3})
+            else
+                Rayfield:Notify({Title = "Invalid Key", Content = "This key does not exist.", Duration = 4})
+            end
+        else
+            Rayfield:Notify({Title = "Connection Error", Content = "Could not reach the server.", Duration = 4})
+        end
     end,
 })
 

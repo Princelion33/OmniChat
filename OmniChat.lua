@@ -20,17 +20,18 @@ local IsRunning = false
 local SelectedModel = "Meta-Llama-3.1-8B-Instruct (Default | 5 points)"
 local SystemPrompt = "You are a helpful assistant."
 local FormatString = "[ChatBot] %s"
+local ChatHistory = {} -- Mémoire de l'IA
 
 -- Variables des paramètres
-local BlacklistedPlayers = {}
+local TargetPlayers = {} -- Liste des joueurs (Blacklist ou Whitelist)
 local WhitelistMode = false
 local ListeningRange = 50
 local MaxMessageLength = 150
 local AntiSpamEnabled = true
+local LastMessageProcessedTime = 0 -- Cooldown Anti-Spam
 local UseBuffer = false
 local AutoRemindBot = true
 local SelectedLanguage = "English"
-local IsProcessingChat = false -- Pour l'Anti-Spam
 
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
@@ -71,49 +72,54 @@ MainTab:CreateToggle({
 
 MainTab:CreateDivider()
 
-local Drop_Blacklist
+-- LOGIQUE UNIFIÉE : BLACKLIST ET WHITELIST
+local Drop_Players
+
+MainTab:CreateToggle({
+    Name = "Whitelist Mode (Checked = Whitelist, Unchecked = Blacklist)",
+    CurrentValue = false,
+    Flag = "Toggle_Whitelist",
+    Callback = function(Value) 
+        WhitelistMode = Value 
+        local modeName = Value and "Whitelist" or "Blacklist"
+        Rayfield:Notify({Title = "Mode Changed", Content = "List is now acting as a " .. modeName, Duration = 3})
+    end,
+})
 
 MainTab:CreateInput({
-    Name = "Blacklist a player",
+    Name = "Add a player to the list",
     CurrentValue = "",
     PlaceholderText = "Enter exact username...",
     RemoveTextAfterFocusLost = true,
-    Flag = "Input_Blacklist",
+    Flag = "Input_List",
     Callback = function(Text)
         if Text ~= "" then
-            table.insert(BlacklistedPlayers, Text)
-            if Drop_Blacklist then Drop_Blacklist:Refresh(BlacklistedPlayers) end
-            Rayfield:Notify({Title = "Blacklisted", Content = Text .. " has been added to the list.", Duration = 3})
+            table.insert(TargetPlayers, Text)
+            if Drop_Players then Drop_Players:Refresh(TargetPlayers) end
+            Rayfield:Notify({Title = "Player Added", Content = Text .. " has been added to the list.", Duration = 3})
         end
     end,
 })
 
-Drop_Blacklist = MainTab:CreateDropdown({
-    Name = "Blacklisted Players",
+Drop_Players = MainTab:CreateDropdown({
+    Name = "Players in the list",
     Options = {"None"},
     CurrentOption = {"None"},
     MultipleOptions = false,
-    Flag = "Drop_Blacklist",
+    Flag = "Drop_Players",
     Callback = function(Options) end,
 })
 
 MainTab:CreateButton({
-    Name = "Reset Blacklist",
+    Name = "Clear the List",
     Callback = function()
-        BlacklistedPlayers = {}
-        Drop_Blacklist:Refresh({"None"})
-        Rayfield:Notify({Title = "Reset", Content = "Blacklist has been cleared.", Duration = 3})
+        TargetPlayers = {}
+        Drop_Players:Refresh({"None"})
+        Rayfield:Notify({Title = "Cleared", Content = "The player list has been cleared.", Duration = 3})
     end,
 })
 
 MainTab:CreateDivider()
-
-MainTab:CreateToggle({
-    Name = "Whitelist Mode",
-    CurrentValue = false,
-    Flag = "Toggle_Whitelist",
-    Callback = function(Value) WhitelistMode = Value end,
-})
 
 MainTab:CreateSlider({
     Name = "Listening Range (Studs)",
@@ -136,14 +142,14 @@ MainTab:CreateSlider({
 })
 
 MainTab:CreateToggle({
-    Name = "Anti Spam",
+    Name = "Anti Spam (3 sec cooldown)",
     CurrentValue = true,
     Flag = "Toggle_AntiSpam",
     Callback = function(Value) AntiSpamEnabled = Value end,
 })
 
 MainTab:CreateToggle({
-    Name = "Buffer (Add 3 sec delay)",
+    Name = "Buffer (Add 3 sec delay to seem human)",
     CurrentValue = false,
     Flag = "Toggle_Buffer",
     Callback = function(Value) UseBuffer = Value end,
@@ -151,7 +157,10 @@ MainTab:CreateToggle({
 
 MainTab:CreateButton({
     Name = "Reset AI Memory",
-    Callback = function() Rayfield:Notify({Title = "Memory Cleared", Content = "The AI forgot the previous conversation.", Duration = 3}) end,
+    Callback = function() 
+        ChatHistory = {} -- Efface la mémoire
+        Rayfield:Notify({Title = "Memory Cleared", Content = "The AI forgot the previous conversation.", Duration = 3}) 
+    end,
 })
 
 MainTab:CreateInput({
@@ -241,7 +250,13 @@ ChatTab:CreateInput({
         if not IsRunning or OmniKey == "" then return end
         AIAnswerParagraph:Set({Title = "AI's Answer", Content = "⏳ Thinking..."})
         
-        local FinalSystemPrompt = SystemPrompt .. " Always reply in " .. SelectedLanguage .. "."
+        -- Assemblage de la mémoire pour l'API
+        local MemoryContext = ""
+        if #ChatHistory > 0 then
+            MemoryContext = " Recent conversation context: " .. table.concat(ChatHistory, " | ")
+        end
+
+        local FinalSystemPrompt = SystemPrompt .. MemoryContext .. " Always reply in " .. SelectedLanguage .. "."
         if AutoRemindBot then FinalSystemPrompt = FinalSystemPrompt .. " Remind the user you are an AI ChatBot." end
 
         local payload = { omni_key = OmniKey, model = SelectedModel, system_prompt = FinalSystemPrompt, user_message = Text }
@@ -306,12 +321,10 @@ HelpTab:CreateParagraph({ Title = "How to get more points?", Content = "Use /cla
 
 -- Fonction pour envoyer un message public
 local function SendRobloxChatMessage(message)
-    -- Si le jeu utilise le nouveau système de chat (TextChatService)
     if game:GetService("TextChatService").ChatVersion == Enum.ChatVersion.TextChatService then
         local textChannel = game:GetService("TextChatService").TextChannels.RBXGeneral
         if textChannel then textChannel:SendAsync(message) end
     else
-        -- Ancien système de chat (Legacy)
         local SayMessageRequest = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
         if SayMessageRequest and SayMessageRequest:FindFirstChild("SayMessageRequest") then
             SayMessageRequest.SayMessageRequest:FireServer(message, "All")
@@ -322,34 +335,41 @@ end
 -- Événement quand un joueur parle
 local function OnPlayerChatted(player, message)
     if not IsRunning or OmniKey == "" then return end
-    if player == LocalPlayer then return end -- Ne pas se répondre à soi-même
+    if player == LocalPlayer then return end
 
-    -- Anti Spam
-    if AntiSpamEnabled and IsProcessingChat then return end
-
-    -- Whitelist / Blacklist Logique
-    local isListed = table.find(BlacklistedPlayers, player.Name) ~= nil
-    if WhitelistMode and not isListed then return end -- En whitelist, on ignore ceux qui ne sont PAS dans la liste
-    if not WhitelistMode and isListed then return end -- En blacklist, on ignore ceux qui SONT dans la liste
-
-    -- Logique de Distance
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-        local distance = (LocalPlayer.Character.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude
-        if distance > ListeningRange then return end
-    else
-        return -- Impossible de calculer la distance
+    -- Logique Anti-Spam (Délai de 3 secondes max)
+    if AntiSpamEnabled then
+        if tick() - LastMessageProcessedTime < 3 then return end
+        LastMessageProcessedTime = tick()
     end
 
-    if AntiSpamEnabled then IsProcessingChat = true end
+    -- Whitelist / Blacklist Logique Unifiée
+    local isListed = table.find(TargetPlayers, player.Name) ~= nil
+    if WhitelistMode and not isListed then return end -- Whitelist: On ignore ceux hors de la liste
+    if not WhitelistMode and isListed then return end -- Blacklist: On ignore ceux dans la liste
 
-    -- Logique de Buffer (délai avant de répondre pour faire humain)
+    -- Logique de Distance (Optimisée)
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head") and player.Character and player.Character:FindFirstChild("Head") then
+        local distance = (LocalPlayer.Character.Head.Position - player.Character.Head.Position).Magnitude
+        if distance > ListeningRange then return end
+    else
+        return
+    end
+
     if UseBuffer then task.wait(3) end
 
-    local FinalSystemPrompt = SystemPrompt .. " Always reply in " .. SelectedLanguage .. ". You are currently talking to a player named " .. player.Name .. ". Keep your answer short and adapted for Roblox chat."
+    -- Ajout de la mémoire de l'IA pour qu'elle suive la discussion
+    local MemoryContext = ""
+    if #ChatHistory > 0 then
+        MemoryContext = " Recent chat context: " .. table.concat(ChatHistory, " | ")
+    end
+
+    local FinalSystemPrompt = SystemPrompt .. MemoryContext .. " Always reply in " .. SelectedLanguage .. ". You are talking to a player named " .. player.Name .. ". Keep your answer short and adapted for Roblox chat."
     if AutoRemindBot then FinalSystemPrompt = FinalSystemPrompt .. " Remind the user you are an AI ChatBot." end
 
     local payload = { omni_key = OmniKey, model = SelectedModel, system_prompt = FinalSystemPrompt, user_message = message }
 
+    -- Lancement asynchrone pour ne pas faire lagger le jeu
     task.spawn(function()
         local success, response = pcall(function()
             return request_func({ Url = API_URL, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = HttpService:JSONEncode(payload) })
@@ -360,28 +380,30 @@ local function OnPlayerChatted(player, message)
             if decodeSuccess and data.success then
                 local rawAnswer = data.answer
                 
-                -- Limiter la taille pour ne pas spammer ou se faire couper par Roblox
+                -- Limiter la taille
                 if string.len(rawAnswer) > MaxMessageLength then
                     rawAnswer = string.sub(rawAnswer, 1, MaxMessageLength) .. "..."
                 end
 
+                -- Mise à jour de la mémoire
+                table.insert(ChatHistory, player.Name .. ": " .. message .. " -> AI: " .. rawAnswer)
+                if #ChatHistory > 3 then table.remove(ChatHistory, 1) end -- Garde seulement les 3 derniers messages pour ne pas surcharger l'API
+
                 local finalMessage = string.format(FormatString, rawAnswer)
                 
-                -- Mise à jour des points et envoi du message en jeu
+                -- Envoi et UI
                 PointsLabel:Set("💳 Current Points: " .. tostring(data.remaining_points))
                 SendRobloxChatMessage(finalMessage)
             end
         end
-        if AntiSpamEnabled then IsProcessingChat = false end
     end)
 end
 
--- Écoute le chat de tous les joueurs présents
+-- Connexions au chat
 for _, player in ipairs(Players:GetPlayers()) do
     player.Chatted:Connect(function(msg) OnPlayerChatted(player, msg) end)
 end
 
--- Écoute le chat de tous les futurs joueurs
 Players.PlayerAdded:Connect(function(player)
     player.Chatted:Connect(function(msg) OnPlayerChatted(player, msg) end)
 end)

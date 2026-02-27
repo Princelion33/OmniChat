@@ -371,12 +371,13 @@ MoreTab:CreateInput({
     RemoveTextAfterFocusLost = false,
     Flag = "Input_APIKey",
     Callback = function(Text) 
-        OmniKey = Text
+        -- 1. MAGIE : On supprime les espaces invisibles au début et à la fin
+        OmniKey = Text:match("^%s*(.-)%s*$") or Text
+        
         if OmniKey == "" then return end
 
         Rayfield:Notify({Title = "Verifying...", Content = "Checking your key...", Duration = 2})
 
-        -- On utilise l'URL de base, mais on remplace /chat par /verify
         local verify_url = string.gsub(API_URL, "/chat", "/verify")
 
         local success, response = pcall(function()
@@ -393,15 +394,22 @@ MoreTab:CreateInput({
                 return HttpService:JSONDecode(response.Body)
             end)
 
-            if decodeSuccess and data.success then
-                -- La clé est valide, on met à jour l'affichage des points !
-                PointsLabel:Set("💳 Current Points: " .. tostring(data.points), "coins")
-                Rayfield:Notify({Title = "Connected!", Content = "Key valid. You have " .. tostring(data.points) .. " points.", Duration = 3})
+            if decodeSuccess then
+                if data.success then
+                    -- La clé est validée !
+                    PointsLabel:Set("💳 Current Points: " .. tostring(data.points))
+                    Rayfield:Notify({Title = "Connected!", Content = "Key valid. You have " .. tostring(data.points) .. " points.", Duration = 4})
+                else
+                    -- L'API a répondu mais la clé est refusée
+                    Rayfield:Notify({Title = "Server says:", Content = tostring(data.error), Duration = 5})
+                end
             else
-                Rayfield:Notify({Title = "Invalid Key", Content = "This key does not exist.", Duration = 4})
+                -- Le serveur a renvoyé une page HTML d'erreur (Panel éteint ou route introuvable)
+                warn("Erreur API (Pas du JSON) :", response.Body)
+                Rayfield:Notify({Title = "API Error", Content = "Le serveur a renvoyé une erreur bizarre. Ouvre F9 !", Duration = 6})
             end
         else
-            Rayfield:Notify({Title = "Connection Error", Content = "Could not reach the server.", Duration = 4})
+            Rayfield:Notify({Title = "Connection Error", Content = "Impossible de joindre le serveur.", Duration = 4})
         end
     end,
 })

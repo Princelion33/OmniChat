@@ -11,7 +11,9 @@ local Window = Rayfield:CreateWindow({
     LoadingSubtitle = "by YourName",
     ShowText = "OmniChat",
     Theme = "Default", 
-    ToggleUIKeybind = "RightShift",
+    
+    -- LA CORRECTION EST ICI :
+    ToggleUIKeybind = Enum.KeyCode.RightShift, -- Ou tu peux mettre "K" avec des guillemets si tu préfères
     
     ConfigurationSaving = {
        Enabled = true,
@@ -25,7 +27,7 @@ local Window = Rayfield:CreateWindow({
        RememberJoins = true 
     },
     
-    KeySystem = false -- On désactive le système de clé intégré à Rayfield, on fera le nôtre avec l'onglet "More"
+    KeySystem = false 
 })
 
 -- ==========================================
